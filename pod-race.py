@@ -170,7 +170,9 @@ class Pod:
         else:
             self.thrust = 100
         
-        if abs(next_checkpoint_angle) < LIMIT_ANGLE_BOOST and next_checkpoint_dist > LIMIT_DISTANCE_BOOST:
+        if abs(next_checkpoint_angle) < LIMIT_ANGLE_BOOST and (
+            next_checkpoint_dist > LIMIT_DISTANCE_BOOST or self.nbr_cp >= checkpointCount * laps - 1
+            ):
             self.thrust = 'BOOST' if self.id == 1 else 100
 
         closing = self.closing()
@@ -208,7 +210,7 @@ class Pod:
         delta_to_target = self.angle_vel(self.target)
         # print(f"{delta_to_target=}", file=sys.stderr, flush=True)
         if abs(delta_to_target) >= 1:
-            delta_rot = delta_to_target
+            delta_rot = delta_to_target / 2
             delta_rot = min(max(delta_rot, -BRAKET_ANGLE), BRAKET_ANGLE)
             # print(f"{delta_rot=} {self.pos=} {self.target=}", file=sys.stderr, flush=True)
             self.target = rotate(self.pos, self.target, delta_rot)
@@ -220,7 +222,7 @@ class Pod:
 
         next_step = 1
         fut = self.simulate(next_step)
-        other = pod1 if self.id == 2 else pod2 if self.id == 1 else None
+        other = pod1 if self.id == 2 else pod2
         fut_other = other.simulate(next_step)
         futbad1 = bad1.simulate(next_step)
         futbad2 = bad2.simulate(next_step)
@@ -234,7 +236,7 @@ class Pod:
 
         if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
             # print(f"{fut.pos.dist(fut_other.pos)=}", file=sys.stderr, flush=True)
-            if self.id == 1: 
+            if self.id == 1 and self.vel.dist(Pos(0, 0)) > 30 and other.vel.dist(Pos(0, 0)) > 30: 
                 self.thrust = 'SHIELD'
             else:
                 self.target = rotate(self.pos, self.target, 90)
