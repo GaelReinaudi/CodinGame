@@ -176,12 +176,13 @@ class Pod:
             self.thrust = 'BOOST' if self.id == 1 else 100
 
         closing = self.closing()
-        if next_checkpoint_dist < THRUST_OFF_DIST + closing and closing > THRUST_OFF_CLOSING_VEL:
+        if next_checkpoint_dist < THRUST_OFF_DIST + -500+2*closing and closing > THRUST_OFF_CLOSING_VEL:
             if nnxy := checkpoints[(self.next_id+1) % checkpointCount]:
                 # print(f"{nnxy=}", file=sys.stderr, flush=True)
                 self.target.x, self.target.y = nnxy.x, nnxy.y
 
         # pursuit of bad1/2 the first
+        other = pod1 if self.id == 2 else pod2
         pursuit = bad2 if bad2.nbr_cp-bad2.simulate(3).next_dist()*1e-6 > bad1.nbr_cp-bad1.simulate(3).next_dist()*1e-6 else bad1
         if self.id == 2:
             # self.target = pursuit.simulate(nbr_of_turns=5).pos
@@ -191,7 +192,10 @@ class Pod:
                 self.target = pursuit.next_checkpoint(plus=1)
             else:
                 self.target = badnext
-            for i in range(20):
+            for i in range(10):
+                if self.simulate(i, thrust=0).pos.dist(other.simulate(i).pos) < 3000:
+                    self.target = rotate(self.pos, self.target, 90 if self.angle_aim_to_target() > 0 else -90)
+                    break
                 if self.simulate(i, thrust=0).pos.dist(self.target) < 3000:
                     self.thrust=0
                     self.target = pursuit.simulate(3).pos
@@ -222,7 +226,6 @@ class Pod:
 
         next_step = 1
         fut = self.simulate(next_step)
-        other = pod1 if self.id == 2 else pod2
         fut_other = other.simulate(next_step)
         futbad1 = bad1.simulate(next_step)
         futbad2 = bad2.simulate(next_step)
@@ -236,8 +239,9 @@ class Pod:
 
         if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
             # print(f"{fut.pos.dist(fut_other.pos)=}", file=sys.stderr, flush=True)
-            if self.id == 1 and self.vel.dist(Pos(0, 0)) > 30 and other.vel.dist(Pos(0, 0)) > 30: 
-                self.thrust = 'SHIELD'
+            if self.id == 1:
+                if self.vel.dist(Pos(0, 0)) > 30 and other.vel.dist(Pos(0, 0)) > 30: 
+                    self.thrust = 'SHIELD'
             else:
                 self.target = rotate(self.pos, self.target, 90)
 
