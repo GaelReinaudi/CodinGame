@@ -8,7 +8,7 @@ LIMIT_ANGLE_POWER = 60
 LIMIT_ANGLE_BOOST = 10
 LIMIT_DISTANCE_BOOST = 9000
 
-THRUST_OFF_DIST = 1500
+THRUST_OFF_DIST = 1000
 THRUST_OFF_ANGLE = 1110
 THRUST_OFF_CLOSING_VEL = 100
 BRAKET_ANGLE = 20
@@ -77,7 +77,7 @@ class Pos():
         return math.sqrt((self.x-other.x)**2+(self.y-other.y)**2)
 
     def __repr__(self):
-        return f"{self.x:04d} {self.y:04d}"
+        return f"({self.x:04d},{self.y:04d})"
 
     def __add__(self, other):
         return Pos(self.x + other.x, self.y+other.y)
@@ -132,21 +132,14 @@ class Pod:
     def next_dist(self):
         return int(self.next_checkpoint().dist(self.pos))
 
-    def next_angle(self):
-        next_cp_pos = self.next_checkpoint()
-        return -int(angle_between_vectors(next_cp_pos.x-self.pos.x, next_cp_pos.y-self.pos.y, 1, 0))
-
     def angle_to(self, to_pos):
-        return -int(angle_between_vectors(to_pos.x-self.pos.x, to_pos.y-self.pos.y, 1, 0))
+        return int(angle_between_vectors(1,0 , to_pos.x-self.pos.x, to_pos.y-self.pos.y) + 180) % 360 - 180
 
     def angle_vel(self, to_pos):
-        return int(angle_between_vectors(self.vel.x, self.vel.y, to_pos.x-self.pos.x, to_pos.y-self.pos.y))
-
-    def angle_aim_to_next(self):
-        return (self.next_angle() - self.angle + 180) % 360 -180
+        return int(angle_between_vectors(self.vel.x, self.vel.y, to_pos.x-self.pos.x, to_pos.y-self.pos.y) + 180) % 360 - 180
 
     def angle_aim_to_target(self):
-        return (self.angle_to(self.target) - self.angle + 180) % 360 -180
+        return int(self.angle_to(self.target) - self.angle + 180) % 360 - 180
 
     def closing(self):
         return self.prev_dist - self.next_dist()
@@ -161,25 +154,40 @@ class Pod:
     def __repr__(self):
         return f"""id={self.id} nbr_cp={self.nbr_cp} next={self.next_id} pos= {self.pos} vel={self.vel} acc={self.acc} a={self.angle:03}"""
 
+    def adjust_target(self):
+        delta_to_target = self.angle_vel(self.target)
+        # print(f"{delta_to_target=}", file=sys.stderr, flush=True)
+        if abs(delta_to_target) >= 1:
+            delta_rot = delta_to_target * 0.5
+            delta_rot = min(max(delta_rot, -BRAKET_ANGLE), BRAKET_ANGLE)
+            # print(f"{delta_rot=} {self.pos=} {self.target=}", file=sys.stderr, flush=True)
+            self.target = rotate(self.pos, self.target, delta_rot)
+            # print(f"{self.target=}", file=sys.stderr, flush=True)
+
     def compute(self):
-        next_checkpoint_dist = self.next_dist()
-        next_checkpoint_angle = self.angle_aim_to_target()
-        # print(f"{next_cp_pos=} {next_checkpoint_dist=} {next_checkpoint_angle=}", file=sys.stderr, flush=True)
-        if abs(next_checkpoint_angle) > LIMIT_ANGLE_POWER:
+        nxt_cp_dist = self.next_dist()
+        nxt_cp_angle = self.angle_aim_to_target()
+        print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
+        if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
             self.thrust = 0
         else:
             self.thrust = 100
         
-        if abs(next_checkpoint_angle) < LIMIT_ANGLE_BOOST and (
-            next_checkpoint_dist > LIMIT_DISTANCE_BOOST or self.nbr_cp >= checkpointCount * laps - 1
-            ):
-            self.thrust = 'BOOST' if self.id == 1 else 100
+        if self.id == 1:
+            if abs(nxt_cp_angle) < LIMIT_ANGLE_BOOST and (
+                nxt_cp_dist > LIMIT_DISTANCE_BOOST or self.nbr_cp >= checkpointCount * laps - 1
+                ):
+                self.thrust = 'BOOST'
 
-        closing = self.closing()
-        if next_checkpoint_dist < THRUST_OFF_DIST + -500+2*closing and closing > THRUST_OFF_CLOSING_VEL:
-            if nnxy := checkpoints[(self.next_id+1) % checkpointCount]:
-                # print(f"{nnxy=}", file=sys.stderr, flush=True)
-                self.target.x, self.target.y = nnxy.x, nnxy.y
+            closing = self.closing()
+            if nxt_cp_dist < THRUST_OFF_DIST + 2 * closing and closing > THRUST_OFF_CLOSING_VEL:
+                if nnxy := checkpoints[(self.next_id+1) % checkpointCount]:
+                    for fut in self.sim_gen(nbr_of_turns=20, target=nnxy):
+                        dist_fut = fut.pos.dist(self.next_checkpoint())
+                        print(f"{nnxy=}, {int(dist_fut)} {fut.angle}  {fut.acc} {fut.vel} {fut.pos}", file=sys.stderr, flush=True)
+                        if dist_fut < 1000:
+                            self.target.x, self.target.y = nnxy.x, nnxy.y
+                            break
 
         # pursuit of bad1/2 the first
         other = pod1 if self.id == 2 else pod2
@@ -211,13 +219,34 @@ class Pod:
                 if pod1.simulate(i).pos.dist(self.simulate(i).pos) < DIST_FUT_SHIELD:
                     self.thrust = 0
 
-        delta_to_target = self.angle_vel(self.target)
-        # print(f"{delta_to_target=}", file=sys.stderr, flush=True)
-        if abs(delta_to_target) >= 1:
-            delta_rot = delta_to_target / 2
-            delta_rot = min(max(delta_rot, -BRAKET_ANGLE), BRAKET_ANGLE)
-            # print(f"{delta_rot=} {self.pos=} {self.target=}", file=sys.stderr, flush=True)
-            self.target = rotate(self.pos, self.target, delta_rot)
+        self.adjust_target()
+
+        if self.id == 1111:
+            found = False
+            target = Pos(self.target.x, self.target.y)
+            ncp = self.next_checkpoint()
+            lowestlowest = 999999
+            bestangle = 0
+            for delta_rot in [0,-10,10,-15,15,-25,25,-45,45,-60,60-90,90][::-1]:
+                self.target = rotate(self.pos, target, delta_rot)
+                lowest = 999999
+                for steps in range(10):
+                    prox = self.simulate(steps, delta_angle=delta_rot).pos.dist(ncp)
+                    if prox > lowest:
+                        break
+                    lowest = prox
+                    if prox < lowestlowest:
+                        lowestlowest = prox
+                        bestangle = delta_rot
+                    if prox  < 500:
+                        found=True
+                        break
+                if found == True:
+                    print(f"{delta_rot=} {prox=}", file=sys.stderr, flush=True)
+                    break
+            if not found:
+                print(f"{bestangle=} {prox=}", file=sys.stderr, flush=True)
+                self.target = rotate(self.pos, target, bestangle)
             # print(f"{self.target=}", file=sys.stderr, flush=True)
 
         # if self.closing() > 200 and self.next_dist() < 2000 and self.closing_other_pod() > 200:
@@ -246,7 +275,7 @@ class Pod:
                 self.target = rotate(self.pos, self.target, 90)
 
 
-    def simulate(self, nbr_of_turns: int = 1, thrust=None):
+    def simulate(self, nbr_of_turns=1, thrust=None, delta_angle=0, target=None):
         if nbr_of_turns == 0:
             return self
         fut = Pod(self.id * 10)
@@ -255,26 +284,48 @@ class Pod:
         fut.prev_angle = self.prev_angle
         fut.pos = self.pos
         fut.vel = self.vel
-        fut.vel *= 0.85
         fut.angle = self.angle
         fut.thrust = 100 if thrust is None else thrust
-        fut.acc = rotate(Pos(0, 0), Pos(fut.thrust, 0), fut.angle)
+        fut.target = target or self.target
 
-        fut.pos += fut.vel + fut.acc * 0.5
+        desired_rot = fut.angle_aim_to_target()
+        desired_rot += delta_angle
+        desired_rot = (desired_rot + 180) % 360 -180
+
+        # if abs(fut.angle_aim_to_target()) > LIMIT_ANGLE_POWER:
+        #     fut.thrust = 0
+        # else:
+        #     fut.thrust = 100
+
+        rot = min(18, max(-18, desired_rot))
+        fut.angle += rot
+        fut.angle = (fut.angle + 180) % 360 -180
+        fut.acc = rotate(Pos(0, 0), Pos(fut.thrust, 0), fut.angle)
+        fut.pos += fut.vel + fut.acc * 0.5 
         fut.vel += fut.acc
-        fut.acc = rotate(Pos(0, 0), fut.acc, fut.angle - fut.prev_angle)
+        fut.vel *= 0.85
 
         fut.end_turn()
 
         if nbr_of_turns > 1:
-            return fut.simulate(nbr_of_turns=nbr_of_turns - 1, thrust=thrust)
+            return fut.simulate(nbr_of_turns=nbr_of_turns - 1, thrust=thrust, delta_angle=delta_angle, target=target)
         # print(f"{fut.id} {nbr_of_turns} {fut}", file=sys.stderr, flush=True)
         return fut
+
+    def sim_gen(self, nbr_of_turns=1, thrust=None, delta_angle=0, target=None):
+        fut = self
+        for i in range(nbr_of_turns):
+            fut = fut.simulate(nbr_of_turns=1, thrust=thrust, delta_angle=delta_angle, target=target)
+            yield fut
+
+
 
 pod1 = Pod(1)
 pod2 = Pod(2)
 bad1 = Pod(-1)
 bad2 = Pod(-2)
+
+turn = 0
 
 while True:
     pod1.update(input())
@@ -292,8 +343,11 @@ while True:
     pod1.compute()
     pod2.compute()
     
-    print(f"{pod1.target} {pod1.thrust}")
-    print(f"{pod2.target} {pod2.thrust}")
+    print(f"{pod1.target.x} {pod1.target.y} {pod1.thrust}")
+    print(f"{pod2.target.x} {pod2.target.y} {pod2.thrust}")
 
     pod1.end_turn()
     pod2.end_turn()
+
+    turn += 1
+
