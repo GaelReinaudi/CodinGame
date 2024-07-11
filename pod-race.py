@@ -5,7 +5,7 @@ import math
 # the standard input according to the problem statement.
 
 LIMIT_ANGLE_POWER = 80
-LIMIT_ANGLE_BOOST = 10
+LIMIT_ANGLE_BOOST = 20
 LIMIT_DISTANCE_BOOST = 9000
 
 THRUST_OFF_DIST = 1000
@@ -98,6 +98,8 @@ for i in range(checkpointCount):
     d = (checkpoints+checkpoints)[i].dist((checkpoints+checkpoints)[i+1])
     if d > LIMIT_DISTANCE_BOOST:
         LIMIT_DISTANCE_BOOST = d
+
+LIMIT_DISTANCE_BOOST -= 2000
 print(f"{LIMIT_DISTANCE_BOOST=}", file=sys.stderr, flush=True)
 
 class Pod:
@@ -180,14 +182,14 @@ class Pod:
                     for fut in self.sim_gen(nbr_of_turns=10, target=nnxy):
                         dist_fut = fut.pos.dist(self.next_checkpoint())
                         print(f"{nnxy=}, d{int(dist_fut)} a{fut.angle}  A{fut.acc} V{fut.vel} P{fut.pos} T={fut.thrust}", file=sys.stderr, flush=True)
-                        print(f"{nnxy=}, {fut}", file=sys.stderr, flush=True)
+                        # print(f"{nnxy=}, {fut}", file=sys.stderr, flush=True)
                         if dist_fut < 500:
                             self.target.x, self.target.y = nnxy.x, nnxy.y
                             break
 
-        nxt_cp_dist = self.next_dist()
-        nxt_cp_angle = self.angle_aim_to_target()
-        print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
+        # nxt_cp_dist = self.next_dist()
+        # nxt_cp_angle = self.angle_aim_to_target()
+        # print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
 
         # pursuit of bad1/2 the first
         other = pod1 if self.id == 2 else pod2
@@ -236,8 +238,8 @@ class Pod:
             for delta_rot in [0,-10,10,-15,15,-25,25,-45,45,-60,60-90,90][::-1]:
                 self.target = rotate(self.pos, target, delta_rot)
                 lowest = 999999
-                for steps in range(10):
-                    prox = self.simulate(steps, delta_angle=delta_rot).pos.dist(ncp)
+                for fut in self.sim_gen(10, delta_angle=delta_rot):
+                    prox = fut.pos.dist(ncp)
                     if prox > lowest:
                         break
                     lowest = prox
