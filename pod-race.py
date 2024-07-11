@@ -4,13 +4,13 @@ import math
 # Auto-generated code below aims at helping you parse
 # the standard input according to the problem statement.
 
-LIMIT_ANGLE_POWER = 60
+LIMIT_ANGLE_POWER = 80
 LIMIT_ANGLE_BOOST = 10
 LIMIT_DISTANCE_BOOST = 9000
 
 THRUST_OFF_DIST = 1000
 THRUST_OFF_ANGLE = 1110
-THRUST_OFF_CLOSING_VEL = 100
+THRUST_OFF_CLOSING_VEL = 50
 BRAKET_ANGLE = 20
 
 DIST_FUT_SHIELD = 800
@@ -56,7 +56,6 @@ def angle_between_vectors(vx, vy, dx, dy):
     angle_degrees = math.degrees(angle_radians)
     return angle_degrees
 
-    
 def rotate(origin, point, angle):
     angle *= 0.01745329251
     ox, oy = origin.x, origin.y
@@ -113,7 +112,7 @@ class Pod:
         self.next_id = next_checkpoint_id
         self.pos = Pos(x, y)
         self.vel = Pos(vx, vy)
-        self.angle = angle
+        self.angle = (angle + 180) % 360 -180
         self.thrust = 100
         self.acc = rotate(Pos(0, 0), Pos(self.thrust, 0), self.angle)
 
@@ -152,7 +151,7 @@ class Pod:
         self.prev_angle = self.angle
 
     def __repr__(self):
-        return f"""id={self.id} nbr_cp={self.nbr_cp} next={self.next_id} pos= {self.pos} vel={self.vel} acc={self.acc} a={self.angle:03}"""
+        return f"""id={self.id} nbr_cp={self.nbr_cp} next={self.next_id} pos={self.pos} vel={self.vel} acc={self.acc} a={self.angle:03} t={self.thrust}"""
 
     def adjust_target(self):
         delta_to_target = self.angle_vel(self.target)
@@ -168,10 +167,6 @@ class Pod:
         nxt_cp_dist = self.next_dist()
         nxt_cp_angle = self.angle_aim_to_target()
         print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
-        if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
-            self.thrust = 0
-        else:
-            self.thrust = 100
         
         if self.id == 1:
             if abs(nxt_cp_angle) < LIMIT_ANGLE_BOOST and (
@@ -180,14 +175,19 @@ class Pod:
                 self.thrust = 'BOOST'
 
             closing = self.closing()
-            if nxt_cp_dist < THRUST_OFF_DIST + 2 * closing and closing > THRUST_OFF_CLOSING_VEL:
+            if nxt_cp_dist < THRUST_OFF_DIST + 10 * closing and closing > THRUST_OFF_CLOSING_VEL and self.nbr_cp < checkpointCount*laps-1:
                 if nnxy := checkpoints[(self.next_id+1) % checkpointCount]:
-                    for fut in self.sim_gen(nbr_of_turns=20, target=nnxy):
+                    for fut in self.sim_gen(nbr_of_turns=10, target=nnxy):
                         dist_fut = fut.pos.dist(self.next_checkpoint())
-                        print(f"{nnxy=}, {int(dist_fut)} {fut.angle}  {fut.acc} {fut.vel} {fut.pos}", file=sys.stderr, flush=True)
-                        if dist_fut < 1000:
+                        print(f"{nnxy=}, d{int(dist_fut)} a{fut.angle}  A{fut.acc} V{fut.vel} P{fut.pos} T={fut.thrust}", file=sys.stderr, flush=True)
+                        print(f"{nnxy=}, {fut}", file=sys.stderr, flush=True)
+                        if dist_fut < 500:
                             self.target.x, self.target.y = nnxy.x, nnxy.y
                             break
+
+        nxt_cp_dist = self.next_dist()
+        nxt_cp_angle = self.angle_aim_to_target()
+        print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
 
         # pursuit of bad1/2 the first
         other = pod1 if self.id == 2 else pod2
@@ -202,7 +202,7 @@ class Pod:
                 self.target = badnext
             for i in range(10):
                 if self.simulate(i, thrust=0).pos.dist(other.simulate(i).pos) < 3000:
-                    self.target = rotate(self.pos, self.target, 90 if self.angle_aim_to_target() > 0 else -90)
+                    # self.target = rotate(self.pos, self.target, 90 if self.angle_aim_to_target() > 0 else -90)
                     break
                 if self.simulate(i, thrust=0).pos.dist(self.target) < 3000:
                     self.thrust=0
@@ -215,11 +215,17 @@ class Pod:
             #     self.thrust = 0
             
             # avoid pod1
-            for i in range(0,3):
-                if pod1.simulate(i).pos.dist(self.simulate(i).pos) < DIST_FUT_SHIELD:
-                    self.thrust = 0
+            # for i in range(0,3):
+            #     if pod1.simulate(i).pos.dist(self.simulate(i).pos) < DIST_FUT_SHIELD:
+            #         self.thrust = 0
 
         self.adjust_target()
+
+        nxt_cp_dist = self.next_dist()
+        nxt_cp_angle = self.angle_aim_to_target()
+        print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
+        if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
+            self.thrust = 0
 
         if self.id == 1111:
             found = False
@@ -274,7 +280,6 @@ class Pod:
             else:
                 self.target = rotate(self.pos, self.target, 90)
 
-
     def simulate(self, nbr_of_turns=1, thrust=None, delta_angle=0, target=None):
         if nbr_of_turns == 0:
             return self
@@ -288,20 +293,23 @@ class Pod:
         fut.thrust = 100 if thrust is None else thrust
         fut.target = target or self.target
 
+        # adjust
+        original_target = fut.target
+        fut.adjust_target()
+        if abs(fut.angle_aim_to_target()) > LIMIT_ANGLE_POWER:
+            fut.thrust = 0
+
+        # print(f"{fut.angle_aim_to_target()=}", file=sys.stderr, flush=True)
         desired_rot = fut.angle_aim_to_target()
         desired_rot += delta_angle
         desired_rot = (desired_rot + 180) % 360 -180
 
-        # if abs(fut.angle_aim_to_target()) > LIMIT_ANGLE_POWER:
-        #     fut.thrust = 0
-        # else:
-        #     fut.thrust = 100
-
+        ## sim
         rot = min(18, max(-18, desired_rot))
         fut.angle += rot
         fut.angle = (fut.angle + 180) % 360 -180
         fut.acc = rotate(Pos(0, 0), Pos(fut.thrust, 0), fut.angle)
-        fut.pos += fut.vel + fut.acc * 0.5 
+        fut.pos += fut.vel + fut.acc * 0.5 *0
         fut.vel += fut.acc
         fut.vel *= 0.85
 
@@ -350,4 +358,5 @@ while True:
     pod2.end_turn()
 
     turn += 1
+
 
