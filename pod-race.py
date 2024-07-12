@@ -5,7 +5,7 @@ import math
 # the standard input according to the problem statement.
 
 LIMIT_ANGLE_POWER = 80
-LIMIT_ANGLE_BOOST = 20
+LIMIT_ANGLE_BOOST = 30
 LIMIT_DISTANCE_BOOST = 9000
 
 THRUST_OFF_DIST = 1000
@@ -13,7 +13,8 @@ THRUST_OFF_ANGLE = 1110
 THRUST_OFF_CLOSING_VEL = 50
 BRAKET_ANGLE = 20
 
-DIST_FUT_SHIELD = 800
+DIST_FUT_SHIELD = 850
+MAX_THRUST = 200
 
 class Map:
     def __init__(self):
@@ -108,6 +109,7 @@ class Pod:
         self.prev_angle = 0
         self.id = id
         self.nbr_cp = 0
+        self.dev_extra = 0
 
     def update(self, in_str):
         x, y, vx, vy, angle, next_checkpoint_id = [int(i) for i in in_str.split()]
@@ -115,7 +117,7 @@ class Pod:
         self.pos = Pos(x, y)
         self.vel = Pos(vx, vy)
         self.angle = (angle + 180) % 360 -180
-        self.thrust = 100
+        self.thrust = MAX_THRUST
         self.acc = rotate(Pos(0, 0), Pos(self.thrust, 0), self.angle)
 
         n = self.next_checkpoint()
@@ -142,6 +144,9 @@ class Pod:
     def angle_aim_to_target(self):
         return int(self.angle_to(self.target) - self.angle + 180) % 360 - 180
 
+    def angle_aim_to(self, to_pos):
+        return int(self.angle_to(to_pos) - self.angle + 180) % 360 - 180
+
     def closing(self):
         return self.prev_dist - self.next_dist()
 
@@ -151,18 +156,19 @@ class Pod:
     def end_turn(self):
         self.prev_dist = self.next_dist()
         self.prev_angle = self.angle
+        self.dev_extra = int(self.dev_extra * 0.9)
 
     def __repr__(self):
-        return f"""id={self.id} nbr_cp={self.nbr_cp} next={self.next_id} pos={self.pos} vel={self.vel} acc={self.acc} a={self.angle:03} t={self.thrust}"""
+        return f"""id={self.id} nbr_cp={self.nbr_cp} next={self.next_id} pos={self.pos} vel={self.vel} acc={self.acc} a={self.angle:03} t={self.thrust} dev={self.dev_extra}"""
 
     def adjust_target(self):
         delta_to_target = self.angle_vel(self.target)
         # print(f"{delta_to_target=}", file=sys.stderr, flush=True)
-        if abs(delta_to_target) >= 1:
+        if abs(delta_to_target) >= 0:
             delta_rot = delta_to_target * 0.5
             delta_rot = min(max(delta_rot, -BRAKET_ANGLE), BRAKET_ANGLE)
             # print(f"{delta_rot=} {self.pos=} {self.target=}", file=sys.stderr, flush=True)
-            self.target = rotate(self.pos, self.target, delta_rot)
+            self.target = rotate(self.pos, self.target, delta_rot + self.dev_extra)
             # print(f"{self.target=}", file=sys.stderr, flush=True)
 
     def compute(self):
@@ -196,7 +202,7 @@ class Pod:
         pursuit = bad2 if bad2.nbr_cp-bad2.simulate(3).next_dist()*1e-6 > bad1.nbr_cp-bad1.simulate(3).next_dist()*1e-6 else bad1
         if self.id == 2:
             # self.target = pursuit.simulate(nbr_of_turns=5).pos
-            self.thrust = 100
+            self.thrust = MAX_THRUST
             badnext = pursuit.next_checkpoint(plus=0)
             if pursuit.simulate(2).pos.dist(badnext) < self.simulate(2).pos.dist(badnext) * 1:
                 self.target = pursuit.next_checkpoint(plus=1)
@@ -211,7 +217,7 @@ class Pod:
                     self.target = pursuit.simulate(3).pos
                     break
             if pursuit.simulate(2).pos.dist(badnext) > self.simulate(2).pos.dist(badnext) * 1.1:
-                self.thrust = 100
+                self.thrust = MAX_THRUST
                 self.target = pursuit.simulate(4).pos
             # if pursuit.pos.dist(badnext) > self.pos.dist(badnext) * 2:
             #     self.thrust = 0
@@ -266,13 +272,17 @@ class Pod:
         fut_other = other.simulate(next_step)
         futbad1 = bad1.simulate(next_step)
         futbad2 = bad2.simulate(next_step)
-        if self.id == 2:
-            if fut.pos.dist(futbad1.pos) < DIST_FUT_SHIELD:
-                # print(f"{fut.pos.dist(futbad1.pos)=}", file=sys.stderr, flush=True)
-                self.thrust = 'SHIELD'
-            if fut.pos.dist(futbad2.pos) < DIST_FUT_SHIELD:
-                # print(f"{fut.pos.dist(futbad2.pos)=}", file=sys.stderr, flush=True)
-                self.thrust = 'SHIELD'
+        for futbad in [futbad1, futbad2]:
+            if fut.pos.dist(futbad.pos) < DIST_FUT_SHIELD:
+                if self.id == 1:
+                    if abs(self.angle_aim_to(futbad.pos)) < 20 + self.dev_extra:
+                        print(f"frontal collision", file=sys.stderr, flush=True)
+                        self.dev_extra += 20
+                    else:
+                        self.thrust = 'SHIELD'
+                if self.id == 2:
+                    # print(f"{fut.pos.dist(futbad1.pos)=}", file=sys.stderr, flush=True)
+                    self.thrust = 'SHIELD'
 
         if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
             # print(f"{fut.pos.dist(fut_other.pos)=}", file=sys.stderr, flush=True)
@@ -292,7 +302,7 @@ class Pod:
         fut.pos = self.pos
         fut.vel = self.vel
         fut.angle = self.angle
-        fut.thrust = 100 if thrust is None else thrust
+        fut.thrust = MAX_THRUST if thrust is None else thrust
         fut.target = target or self.target
 
         # adjust
