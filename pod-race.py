@@ -7,6 +7,7 @@ import math
 LIMIT_ANGLE_POWER = 80
 LIMIT_ANGLE_BOOST = 30
 LIMIT_DISTANCE_BOOST = 9000
+POD_RADIUS = 400
 
 THRUST_OFF_DIST = 1000
 THRUST_OFF_ANGLE = 1110
@@ -80,10 +81,16 @@ class Pos():
         return f"({self.x:04d},{self.y:04d})"
 
     def __add__(self, other):
-        return Pos(self.x + other.x, self.y+other.y)
+        return Pos(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other):
+        return Pos(self.x - other.x, self.y - other.y)
 
     def __mul__(self, fac):
         return Pos(self.x * fac, self.y * fac)
+
+    def __len__(self):
+        return int(math.sqrt((self.x)**2+(self.y)**2))
 
 laps = int(input())
 checkpointCount = int(input())
@@ -104,12 +111,16 @@ LIMIT_DISTANCE_BOOST -= 2000
 print(f"{LIMIT_DISTANCE_BOOST=}", file=sys.stderr, flush=True)
 
 class Pod:
+    boost_avail = 1
+    
     def __init__(self, id: int):
         self.prev_dist = 0
         self.prev_angle = 0
         self.id = id
         self.nbr_cp = 0
         self.dev_extra = 0
+        self.shield_no_thrust = 0
+        self.is_bumper = False
 
     def update(self, in_str):
         x, y, vx, vy, angle, next_checkpoint_id = [int(i) for i in in_str.split()]
@@ -153,10 +164,43 @@ class Pod:
     def angle_closing(self, to_pos):
         return abs(self.angle_vel(to_pos)) - abs(self.prev_angle)
 
+    def time_to_collision(self, other, radius=POD_RADIUS) -> float:
+        pos1, vel1 = self.pos, self.vel
+        pos2, vel2 = other.pos, other.vel
+        rel_pos = pos2 - pos1
+        rel_vel = vel2 - vel1
+        a = rel_vel.x ** 2 + rel_vel.y ** 2
+        b = 2 * (rel_pos.x * rel_vel.x + rel_pos.y * rel_vel.y)
+        c = rel_pos.x ** 2 + rel_pos.y ** 2 - (2 * radius) ** 2
+
+        if a == 0:
+            return None  # Parallel velocities
+        
+        discriminant = b ** 2 - 4 * a * c
+        if discriminant < 0:
+            return None  # No real roots, no collision
+        
+        t1 = (-b - math.sqrt(discriminant)) / (4 * a)
+        t2 = (-b + math.sqrt(discriminant)) / (4 * a)
+        
+        if t1 >= 0 and t2 >= 0:
+            return min(t1, t2)
+        elif t1 >= 0:
+            return t1
+        elif t2 >= 0:
+            return t2
+        else:
+            return None  # No collision in the future
+
+
     def end_turn(self):
         self.prev_dist = self.next_dist()
         self.prev_angle = self.angle
         self.dev_extra = int(self.dev_extra * 0.9)
+        if self.shield_no_thrust:
+            self.shield_no_thrust -= 1
+        if self.target == 'SHIELD':
+            self.shield_no_thrust = 3
 
     def __repr__(self):
         return f"""id={self.id} nbr_cp={self.nbr_cp} next={self.next_id} pos={self.pos} vel={self.vel} acc={self.acc} a={self.angle:03} t={self.thrust} dev={self.dev_extra}"""
@@ -171,17 +215,38 @@ class Pod:
             self.target = rotate(self.pos, self.target, delta_rot + self.dev_extra)
             # print(f"{self.target=}", file=sys.stderr, flush=True)
 
+    def try_to_boost(self, is_sim=False):
+        if self.boost_avail:
+            if not is_sim:
+                self.boost_avail -= 1
+            print(f"{self.id=} BOOOOOOOOOOOOOOOOOOOOOOOOOOOST {is_sim=}", file=sys.stderr, flush=True)
+            return "BOOST"
+        return MAX_THRUST
+
+    def try_thrust(self, desired=MAX_THRUST):
+        if self.shield_no_thrust:
+            print(f"{self.id=} CANNOT THRUST {self.shield_no_thrust=}", file=sys.stderr, flush=True)
+            return 0
+        return desired
+            
+    def adjust_thrust(self, is_sim=False):
+        if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
+            self.thrust = 0
+        elif abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER // 2 and turn != 0:
+            self.thrust = self.try_thrust(MAX_THRUST // 2)
+
+        if not self.is_bumper and self.id > 0:
+            if abs(self.angle_aim_to_target()) < LIMIT_ANGLE_BOOST and (
+                self.next_dist() > LIMIT_DISTANCE_BOOST or self.nbr_cp >= checkpointCount * laps - 1
+                ):
+                self.thrust = self.try_to_boost(is_sim=is_sim)
+
     def compute(self):
         nxt_cp_dist = self.next_dist()
         nxt_cp_angle = self.angle_aim_to_target()
         print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
         
-        if self.id == 1:
-            if abs(nxt_cp_angle) < LIMIT_ANGLE_BOOST and (
-                nxt_cp_dist > LIMIT_DISTANCE_BOOST or self.nbr_cp >= checkpointCount * laps - 1
-                ):
-                self.thrust = 'BOOST'
-
+        if not self.is_bumper:
             closing = self.closing()
             if nxt_cp_dist < THRUST_OFF_DIST + 10 * closing and closing > THRUST_OFF_CLOSING_VEL and self.nbr_cp < checkpointCount*laps-1:
                 if nnxy := checkpoints[(self.next_id+1) % checkpointCount]:
@@ -200,7 +265,7 @@ class Pod:
         # pursuit of bad1/2 the first
         other = pod1 if self.id == 2 else pod2
         pursuit = bad2 if bad2.nbr_cp-bad2.simulate(3).next_dist()*1e-6 > bad1.nbr_cp-bad1.simulate(3).next_dist()*1e-6 else bad1
-        if self.id == 2:
+        if self.is_bumper:
             # self.target = pursuit.simulate(nbr_of_turns=5).pos
             self.thrust = MAX_THRUST
             badnext = pursuit.next_checkpoint(plus=0)
@@ -208,6 +273,7 @@ class Pod:
                 self.target = pursuit.next_checkpoint(plus=1)
             else:
                 self.target = badnext
+
             for i in range(10):
                 if self.simulate(i, thrust=0).pos.dist(other.simulate(i).pos) < 3000:
                     # self.target = rotate(self.pos, self.target, 90 if self.angle_aim_to_target() > 0 else -90)
@@ -216,9 +282,19 @@ class Pod:
                     self.thrust=0
                     self.target = pursuit.simulate(3).pos
                     break
+
             if pursuit.simulate(2).pos.dist(badnext) > self.simulate(2).pos.dist(badnext) * 1.1:
-                self.thrust = MAX_THRUST
                 self.target = pursuit.simulate(4).pos
+             # can we collide?
+            for i, (futme, futpur) in enumerate(zip(self.sim_gen(6, target=pursuit.simulate(3).pos, thrust=MAX_THRUST), pursuit.sim_gen(6))):
+                ft = i + 1
+                t_col = futme.time_to_collision(futpur)
+                if t_col:
+                    taim = ft + int(t_col)
+                    print(f"PURSUIT collision? {ft=} {self.id}->{pursuit.id} in {t_col:.2f} {taim}", file=sys.stderr, flush=True)
+                    self.thrust = self.try_to_boost()
+                    self.target = pursuit.simulate(taim).pos
+                    break
             # if pursuit.pos.dist(badnext) > self.pos.dist(badnext) * 2:
             #     self.thrust = 0
             
@@ -228,12 +304,10 @@ class Pod:
             #         self.thrust = 0
 
         self.adjust_target()
-
+        self.adjust_thrust()
         nxt_cp_dist = self.next_dist()
         nxt_cp_angle = self.angle_aim_to_target()
         print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
-        if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
-            self.thrust = 0
 
         if self.id == 1111:
             found = False
@@ -270,23 +344,27 @@ class Pod:
         next_step = 1
         fut = self.simulate(next_step)
         fut_other = other.simulate(next_step)
-        futbad1 = bad1.simulate(next_step)
-        futbad2 = bad2.simulate(next_step)
-        for futbad in [futbad1, futbad2]:
-            if fut.pos.dist(futbad.pos) < DIST_FUT_SHIELD:
-                if self.id == 1:
+        for bad in [bad1, bad2]:
+            futbad = bad.simulate(next_step)
+            t_col = self.time_to_collision(bad)
+            if t_col:
+                print(f"collision? {self.id}->{bad.id} in {t_col:.2f}", file=sys.stderr, flush=True)
+            if t_col and t_col <= 1:
+                if not self.is_bumper:
                     if abs(self.angle_aim_to(futbad.pos)) < 20 + self.dev_extra:
                         print(f"frontal collision", file=sys.stderr, flush=True)
                         self.dev_extra += 20
-                    else:
+                    # else:
+                    #     self.thrust = 'SHIELD'
+                    if len(self.vel - fut.vel) > 500:
                         self.thrust = 'SHIELD'
-                if self.id == 2:
+                if self.is_bumper:
                     # print(f"{fut.pos.dist(futbad1.pos)=}", file=sys.stderr, flush=True)
                     self.thrust = 'SHIELD'
 
         if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
             # print(f"{fut.pos.dist(fut_other.pos)=}", file=sys.stderr, flush=True)
-            if self.id == 1:
+            if not self.is_bumper:
                 if self.vel.dist(Pos(0, 0)) > 30 and other.vel.dist(Pos(0, 0)) > 30: 
                     self.thrust = 'SHIELD'
             else:
@@ -304,19 +382,25 @@ class Pod:
         fut.angle = self.angle
         fut.thrust = MAX_THRUST if thrust is None else thrust
         fut.target = target or self.target
+        fut.shield_no_thrust = self.shield_no_thrust
+        fut.is_bumper = self.is_bumper
 
         # adjust
         original_target = fut.target
         fut.adjust_target()
-        if abs(fut.angle_aim_to_target()) > LIMIT_ANGLE_POWER:
+        fut.adjust_thrust(is_sim=True)
+
+        if fut.thrust == "BOOST":
+            fut.thrust = 650
+        if fut.thrust == "SHIELD":
             fut.thrust = 0
 
+        ## sim
         # print(f"{fut.angle_aim_to_target()=}", file=sys.stderr, flush=True)
         desired_rot = fut.angle_aim_to_target()
         desired_rot += delta_angle
         desired_rot = (desired_rot + 180) % 360 -180
 
-        ## sim
         rot = min(18, max(-18, desired_rot))
         fut.angle += rot
         fut.angle = (fut.angle + 180) % 360 -180
@@ -354,6 +438,15 @@ while True:
     bad2.update(input())
 
     # future1 = [pod.simulate(nbr_of_turns=1) for pod in [pod1, pod2, bad1, bad2]]
+
+    pod2.is_bumper = True
+    # make one a bumper ?
+    second = pod2 if pod1.nbr_cp-pod1.simulate(3).next_dist()*1e-6 > pod2.nbr_cp-pod2.simulate(3).next_dist()*1e-6 else pod1
+    other = pod1 if second.id == pod2.id else pod2
+    if turn == 500 or abs(pod1.nbr_cp - pod2.nbr_cp) >= 2:
+        if not other.is_bumper:
+            second.is_bumper = True
+            print(f"{second.id} is BUMPER {second.is_bumper}", file=sys.stderr, flush=True)
 
     print(f"{pod1=}", file=sys.stderr, flush=True)
     print(f"{pod2=}", file=sys.stderr, flush=True)
