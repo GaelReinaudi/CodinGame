@@ -209,7 +209,7 @@ class Pod:
         delta_to_target = self.angle_vel(self.target)
         # print(f"{delta_to_target=}", file=sys.stderr, flush=True)
         if abs(delta_to_target) >= 0:
-            delta_rot = delta_to_target * 0.5
+            delta_rot = delta_to_target #* 0.5
             delta_rot = min(max(delta_rot, -BRAKET_ANGLE), BRAKET_ANGLE)
             # print(f"{delta_rot=} {self.pos=} {self.target=}", file=sys.stderr, flush=True)
             self.target = rotate(self.pos, self.target, delta_rot + self.dev_extra)
@@ -245,25 +245,34 @@ class Pod:
         nxt_cp_dist = self.next_dist()
         nxt_cp_angle = self.angle_aim_to_target()
         print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
+
+        other = pod1 if self.id == 2 else pod2
         
         if not self.is_bumper:
             closing = self.closing()
             if nxt_cp_dist < THRUST_OFF_DIST + 10 * closing and closing > THRUST_OFF_CLOSING_VEL and self.nbr_cp < checkpointCount*laps-1:
                 if nnxy := checkpoints[(self.next_id+1) % checkpointCount]:
-                    for fut in self.sim_gen(nbr_of_turns=10, target=nnxy):
+                    for i, fut in enumerate(self.sim_gen(nbr_of_turns=10, target=nnxy)):
                         dist_fut = fut.pos.dist(self.next_checkpoint())
                         print(f"{nnxy=}, d{int(dist_fut)} a{fut.angle}  A{fut.acc} V{fut.vel} P{fut.pos} T={fut.thrust}", file=sys.stderr, flush=True)
                         # print(f"{nnxy=}, {fut}", file=sys.stderr, flush=True)
                         if dist_fut < 500:
-                            self.target.x, self.target.y = nnxy.x, nnxy.y
-                            break
+                            # nocollisions
+                            t_cols = [self.time_to_collision(p) for p in [other, bad1, bad2]]
+                            t_col_min = min([t or 99 for t in t_cols])
+                            t_fut = i + 1
+                            if t_col_min <= t_fut:
+                                print(f"AVOIDING TURN {self.id}, {t_fut=} {t_cols=}", file=sys.stderr, flush=True)
+                            else:
+                                print(f"NEW TARGET {nnxy.x, nnxy.y}", file=sys.stderr, flush=True)
+                                self.target.x, self.target.y = nnxy.x, nnxy.y
+                                break
 
         # nxt_cp_dist = self.next_dist()
         # nxt_cp_angle = self.angle_aim_to_target()
         # print(f"{self.id} a{self.angle:03} {nxt_cp_dist=} {nxt_cp_angle=}", file=sys.stderr, flush=True)
 
         # pursuit of bad1/2 the first
-        other = pod1 if self.id == 2 else pod2
         pursuit = bad2 if bad2.nbr_cp-bad2.simulate(3).next_dist()*1e-6 > bad1.nbr_cp-bad1.simulate(3).next_dist()*1e-6 else bad1
         if self.is_bumper:
             # self.target = pursuit.simulate(nbr_of_turns=5).pos
@@ -365,7 +374,7 @@ class Pod:
         if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
             # print(f"{fut.pos.dist(fut_other.pos)=}", file=sys.stderr, flush=True)
             if not self.is_bumper:
-                if self.vel.dist(Pos(0, 0)) > 30 and other.vel.dist(Pos(0, 0)) > 30: 
+                if len(self.vel - other.vel) > 200: 
                     self.thrust = 'SHIELD'
             else:
                 self.target = rotate(self.pos, self.target, 90)
@@ -439,11 +448,11 @@ while True:
 
     # future1 = [pod.simulate(nbr_of_turns=1) for pod in [pod1, pod2, bad1, bad2]]
 
-    pod2.is_bumper = True
+    # pod2.is_bumper = True
     # make one a bumper ?
     second = pod2 if pod1.nbr_cp-pod1.simulate(3).next_dist()*1e-6 > pod2.nbr_cp-pod2.simulate(3).next_dist()*1e-6 else pod1
     other = pod1 if second.id == pod2.id else pod2
-    if turn == 500 or abs(pod1.nbr_cp - pod2.nbr_cp) >= 2:
+    if turn == 50 or abs(pod1.nbr_cp - pod2.nbr_cp) >= 2:
         if not other.is_bumper:
             second.is_bumper = True
             print(f"{second.id} is BUMPER {second.is_bumper}", file=sys.stderr, flush=True)
@@ -455,6 +464,9 @@ while True:
 
     pod1.compute()
     pod2.compute()
+
+    if turn == 0:
+        pod1.thrust = pod1.try_to_boost()
     
     print(f"{pod1.target.x} {pod1.target.y} {pod1.thrust}")
     print(f"{pod2.target.x} {pod2.target.y} {pod2.thrust}")
