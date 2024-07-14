@@ -180,8 +180,8 @@ class Pod:
         if discriminant < 0:
             return None  # No real roots, no collision
         
-        t1 = (-b - math.sqrt(discriminant)) / (4 * a)
-        t2 = (-b + math.sqrt(discriminant)) / (4 * a)
+        t1 = (-b - math.sqrt(discriminant)) / (2 * a)
+        t2 = (-b + math.sqrt(discriminant)) / (2 * a)
         
         if t1 >= 0 and t2 >= 0:
             return min(t1, t2)
@@ -230,6 +230,8 @@ class Pod:
         return desired
             
     def adjust_thrust(self, is_sim=False):
+        if self.is_bumper:
+            return
         if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
             self.thrust = 10
         elif abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER * 0.85 and turn != 0:
@@ -295,7 +297,10 @@ class Pod:
             if pursuit.simulate(2).pos.dist(badnext) > self.simulate(2).pos.dist(badnext) * 1.1:
                 self.target = pursuit.simulate(4).pos
              # can we collide?
-            for i, (futme, futpur) in enumerate(zip(self.sim_gen(6, target=pursuit.simulate(3).pos, thrust=MAX_THRUST), pursuit.sim_gen(6))):
+            for i, (futme, futpur) in enumerate(zip(
+                self.sim_gen(6, target=pursuit.simulate(6).pos, thrust=MAX_THRUST), 
+                pursuit.sim_gen(6)
+                )):
                 ft = i + 1
                 t_col = futme.time_to_collision(futpur)
                 if t_col:
@@ -365,8 +370,8 @@ class Pod:
                         self.dev_extra += 20
                     # else:
                     #     self.thrust = 'SHIELD'
-                    print(f"{len(self.vel - futbad.vel)=}", file=sys.stderr, flush=True)
-                    if len(fut.vel - futbad.vel) > 500:
+                    print(f"{len(fut.vel - futbad.vel)=}", file=sys.stderr, flush=True)
+                    if len(fut.vel - futbad.vel) > 400:
                         self.thrust = 'SHIELD'
                 if self.is_bumper:
                     # print(f"{fut.pos.dist(futbad1.pos)=}", file=sys.stderr, flush=True)
