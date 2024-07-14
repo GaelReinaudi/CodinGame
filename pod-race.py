@@ -231,8 +231,8 @@ class Pod:
             
     def adjust_thrust(self, is_sim=False):
         if abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER and turn != 0:
-            self.thrust = 0
-        elif abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER // 2 and turn != 0:
+            self.thrust = 10
+        elif abs(self.angle_aim_to_target()) > LIMIT_ANGLE_POWER * 0.85 and turn != 0:
             self.thrust = self.try_thrust(MAX_THRUST // 2)
 
         if not self.is_bumper and self.id > 0:
@@ -365,14 +365,14 @@ class Pod:
                         self.dev_extra += 20
                     # else:
                     #     self.thrust = 'SHIELD'
-                    if len(self.vel - fut.vel) > 500:
+                    print(f"{len(self.vel - futbad.vel)=}", file=sys.stderr, flush=True)
+                    if len(fut.vel - futbad.vel) > 500:
                         self.thrust = 'SHIELD'
                 if self.is_bumper:
                     # print(f"{fut.pos.dist(futbad1.pos)=}", file=sys.stderr, flush=True)
                     self.thrust = 'SHIELD'
 
         if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
-            # print(f"{fut.pos.dist(fut_other.pos)=}", file=sys.stderr, flush=True)
             if not self.is_bumper:
                 if len(self.vel - other.vel) > 200: 
                     self.thrust = 'SHIELD'
