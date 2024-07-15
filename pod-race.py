@@ -291,7 +291,7 @@ class Pod:
                 print(f"PURSUIT collision? {ft=} {self.id}->{pursuit.id} in {t_col:.2f} {taim}", file=sys.stderr, flush=True)
                 self.thrust = self.try_to_boost()
                 self.target = pursuit.simulate(taim).pos
-                break
+                # break
         # if pursuit.pos.dist(badnext) > self.pos.dist(badnext) * 2:
         #     self.thrust = 0
         
@@ -310,9 +310,13 @@ class Pod:
                 # print(f"{fut.pos.dist(futbad1.pos)=}", file=sys.stderr, flush=True)
                 self.thrust = 'SHIELD'
 
-        fut_other = other.simulate(next_step)
-        if fut.pos.dist(fut_other.pos) < DIST_FUT_SHIELD:
-            self.target = rotate(self.pos, self.target, 90)
+        # anti other collisions
+        STEPS_FUT = 3
+        for i, (fut, fut_other) in enumerate(zip(self.sim_gen(STEPS_FUT), other.sim_gen(STEPS_FUT))):
+            t_col_other = fut.time_to_collision(fut_other)
+            if t_col_other and t_col_other < 2:
+                print(f"AVOIDING COLLISION t+{i+1} {t_col_other=}", file=sys.stderr, flush=True)
+                self.thrust = 0
 
     def compute(self):
         if self.is_bumper:
